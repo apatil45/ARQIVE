@@ -33,7 +33,7 @@ npm install
 npm run dev
 ```
 
-App runs at `http://localhost:3000`. Default login: `admin` / `admin`. Change this for any real use.
+<!-- App runs at `http://localhost:3000`. Default login: `admin` / `admin`. Change this for any real use. -->
 
 ## Usage
 
