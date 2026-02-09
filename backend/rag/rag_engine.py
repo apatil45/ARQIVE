@@ -22,38 +22,48 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Ollama context limits (optimized for speed)
-OLLAMA_CONTEXT_LIMIT = 4096  # Maximum context window for llama2
-PROMPT_TEMPLATE_TOKENS = 50  # Reduced for faster processing
-RESERVE_FOR_RESPONSE = 100   # Reduced reserve for faster responses
-MAX_CONTEXT_TOKENS = 1500    # Aggressively reduced from 3816 for 3-5x speedup
+# Import constants from config (backward compatible aliases)
+OLLAMA_CONTEXT_LIMIT = settings.OLLAMA_CONTEXT_LIMIT
+PROMPT_TEMPLATE_TOKENS = settings.PROMPT_TEMPLATE_TOKENS
+RESERVE_FOR_RESPONSE = settings.RESERVE_FOR_RESPONSE
+MAX_CONTEXT_TOKENS = settings.MAX_CONTEXT_TOKENS
 
 
 class RAGEngine:
     """RAG pipeline: retrieve relevant chunks and generate answer with LLM"""
     
     def __init__(self, vector_db: VectorDB, sqlite_db: Optional["SQLiteDB"] = None):
+        """
+        Initialize RAG Engine with audit-aware capabilities
+        """
         self.vector_db = vector_db
         self.embedding_model = EmbeddingModel()
         self.ollama_client = Client(host=settings.OLLAMA_BASE_URL)
         # Cache for query embeddings (LRU cache, max 1000 entries)
         # Using OrderedDict for proper LRU behavior
         self._embedding_cache: OrderedDict[str, List[float]] = OrderedDict()
-        self._max_cache_size = 1000
+        self._max_cache_size = settings.EMBEDDING_CACHE_SIZE
         self._cache_lock = asyncio.Lock()  # Thread-safe cache operations
         # SQLite DB instance (optional, will create if not provided)
         self._sqlite_db = sqlite_db
         # Cache for user document access (username -> set of document IDs, TTL: 5 minutes)
         self._user_doc_cache: Dict[str, tuple] = {}  # {username: (doc_ids, expiry_time)}
-        self._doc_cache_ttl = 300  # 5 minutes
+        self._doc_cache_ttl = settings.USER_DOC_CACHE_TTL
+        # Cache invalidation: track which users need cache refresh
+        self._cache_invalidation_set: set = set()  # Set of usernames whose cache should be invalidated
         # Cache for full query results (query + username -> full result, TTL: 1 hour)
         self._query_result_cache: OrderedDict[str, Dict] = OrderedDict()
-        self._query_result_cache_size = 500  # Max 500 cached queries
-        self._query_result_cache_ttl = 3600  # 1 hour TTL
+        self._query_result_cache_size = settings.QUERY_RESULT_CACHE_SIZE
+        self._query_result_cache_ttl = settings.QUERY_RESULT_CACHE_TTL
         
         # GPU detection and hardware-aware configuration
         self.gpu_available = self._detect_gpu()
         self._configure_for_hardware()
+        
+        # Audit-aware components (industry-standard enhancements)
+        self.query_classifier = QueryClassifier()
+        self.audit_prompt_builder = AuditPromptBuilder()
+        
         logger.info(f"RAG Engine initialized. GPU available: {self.gpu_available}")
     
     def _detect_gpu(self) -> bool:
@@ -118,13 +128,13 @@ class RAGEngine:
     def _configure_for_hardware(self):
         """Configure timeouts and limits based on available hardware"""
         if self.gpu_available:
-            self.ollama_timeout = 30  # GPU is fast, shorter timeout
-            self.max_context_tokens = 2000  # GPU can handle larger contexts
-            self.max_response_tokens = 400  # Increased for complete answers
+            self.ollama_timeout = settings.OLLAMA_TIMEOUT_GPU
+            self.max_context_tokens = settings.MAX_CONTEXT_TOKENS_GPU
+            self.max_response_tokens = settings.MAX_RESPONSE_TOKENS_GPU
         else:
-            self.ollama_timeout = 60  # Reduced from 120 - smaller context = faster
-            self.max_context_tokens = MAX_CONTEXT_TOKENS  # Use optimized limit (1500)
-            self.max_response_tokens = 250  # Increased from 100 - need more tokens for complete answers
+            self.ollama_timeout = settings.OLLAMA_TIMEOUT_CPU
+            self.max_context_tokens = settings.MAX_CONTEXT_TOKENS
+            self.max_response_tokens = settings.MAX_RESPONSE_TOKENS_CPU
     
     def _sanitize_query(self, query: str) -> str:
         """
@@ -495,7 +505,20 @@ class RAGEngine:
         
         # PHASE 1 IMPROVEMENT 1: Similarity threshold filtering
         # Filter out chunks with low similarity scores to improve relevance
-        SIMILARITY_THRESHOLD = settings.SIMILARITY_THRESHOLD  # Cosine similarity (0-1, higher = more similar)
+        # Classification-based threshold (industry-standard)
+        query_classification_prelim = self.query_classifier.classify(query, user_role=user_role or username)
+        retrieval_strategy_prelim = self.query_classifier.get_retrieval_strategy(query_classification_prelim)
+        
+        # Use strategy threshold if available, otherwise use default
+        if retrieval_strategy_prelim.get('similarity_threshold'):
+            SIMILARITY_THRESHOLD = retrieval_strategy_prelim['similarity_threshold']
+        else:
+            # Fallback to legacy detection
+            is_metadata_query_prelim = self._is_metadata_query(query, metadatas)
+            if is_metadata_query_prelim:
+                SIMILARITY_THRESHOLD = 0.3  # Lower threshold for metadata queries
+            else:
+                SIMILARITY_THRESHOLD = settings.SIMILARITY_THRESHOLD  # Cosine similarity (0-1, higher = stricter)
         all_distances = results.get("distances", [])
         
         # Map distances to filtered documents (after access filtering)
@@ -566,13 +589,14 @@ class RAGEngine:
         chunker = Chunker()
         context_chunks = []
         total_context_tokens = 0
-        # AGGRESSIVE: Lower thresholds for faster CPU inference
-        min_context_tokens = 50   # Aggressively reduced - minimum for basic answer
-        target_context_tokens = 500  # Target ~500 tokens for fast processing
-        max_chunk_length = 400    # Reduced chunk length for faster processing
+        # Use config values for thresholds
+        min_context_tokens = settings.MIN_CONTEXT_TOKENS
+        target_context_tokens = settings.TARGET_CONTEXT_TOKENS
+        max_chunk_length = settings.MAX_CHUNK_LENGTH_TOKENS
         
         # Detect query type early for context building
         is_simple_fact = self._is_simple_fact_query(query)
+        is_metadata_query = self._is_metadata_query(query, metadatas)
         
         for i, chunk in enumerate(documents):
             # AGGRESSIVE: Truncate chunks if they're too long
@@ -632,41 +656,113 @@ class RAGEngine:
                 f"Ollama limit ({OLLAMA_CONTEXT_LIMIT} tokens). Truncation may occur."
             )
         
-        # IMPROVED: Better prompt engineering with intelligent query type detection
-        # Use general heuristics to detect simple fact extraction queries
-        is_simple_fact = self._is_simple_fact_query(query)
+        # INDUSTRY-STANDARD: Classify query and get retrieval strategy (after retrieval)
+        query_classification = self.query_classifier.classify(query, user_role=user_role or username)
+        query_type = query_classification['type']
+        retrieval_strategy = self.query_classifier.get_retrieval_strategy(query_classification)
         
-        if is_simple_fact:
-            # Direct prompt for simple fact extraction
-            prompt = f"""Answer the question directly and concisely using ONLY the context below.
+        # Get document metadata for prompt enhancement
+        document_metadata = None
+        if self._sqlite_db and metadatas:
+            # Try to get document metadata from first chunk's document
+            first_doc_id = metadatas[0].get('document_id') if metadatas else None
+            if first_doc_id:
+                try:
+                    # Get document metadata from SQLite
+                    doc_metadata = await self._sqlite_db.get_document_metadata(first_doc_id)
+                    if doc_metadata and doc_metadata.get('metadata', {}).get('audit_metadata'):
+                        document_metadata = doc_metadata['metadata']['audit_metadata']
+                except Exception as e:
+                    logger.debug(f"Could not fetch document metadata: {e}")
+        
+        # Use audit-aware prompts if query is classified (industry-standard)
+        use_audit_prompts = getattr(settings, 'USE_AUDIT_CHUNKER', True) and query_type != QueryType.GENERAL
+        
+        # Legacy detection (for backward compatibility)
+        is_simple_fact = self._is_simple_fact_query(query)
+        is_metadata_query = self._is_metadata_query(query, metadatas)
+        
+        if use_audit_prompts:
+            # Build specialized audit prompt
+            prompt = self.audit_prompt_builder.build_prompt(
+                query=query,
+                context=context,
+                query_type=query_type,
+                user_role=user_role,
+                document_metadata=document_metadata
+            )
+        elif is_metadata_query:
+            # Special handling for document metadata queries
+            # Extract document titles/filenames from metadata
+            doc_titles = []
+            for i, metadata in enumerate(metadatas):
+                filename = metadata.get("filename", "")
+                doc_id = metadata.get("document_id", "")
+                if filename:
+                    doc_titles.append(f"Document {i+1} (ID: {doc_id}): {filename}")
+            
+            if doc_titles:
+                prompt = f"""You are answering a question about document metadata (titles, filenames, etc.).
 
-Context:
-{context}
+Available Documents:
+{chr(10).join(doc_titles)}
 
 Question: {query}
 
 Instructions:
-- Extract the exact answer from the context
-- If the answer is in the context, state it directly
-- If not found, say: "The information is not available in the provided documents."
-- Do not add explanations unless asked
+- Answer ONLY using the document titles/filenames listed above
+- If asking for "title" or "name", provide the filename(s) from the list
+- If asking about a specific document, match it by ID or position
+- Be direct and concise
+- If the question cannot be answered from the document list, say: "I cannot find that information in the available documents."
 
 Answer:"""
-        else:
-            # Standard prompt for complex questions
-            prompt = f"""You are a precise document analysis assistant. Answer the question using ONLY the provided context.
+            else:
+                # Fallback to context-based answer
+                prompt = f"""Answer the question using the context below.
 
 Context:
 {context}
 
 Question: {query}
 
+Answer:"""
+        elif is_simple_fact:
+            # Direct prompt for simple fact extraction
+            prompt = f"""Read the question carefully, then find the answer in the context below.
+
+Question: {query}
+
+Context:
+{context}
+
+Instructions:
+1. Understand what the question is asking for
+2. Search the context for information that directly answers the question
+3. Extract the exact answer from the context
+4. If the answer is found, state it directly without extra text
+5. If not found, say: "The information is not available in the provided documents."
+6. Do not include random text that doesn't answer the question
+
+Answer:"""
+        else:
+            # Standard prompt for complex questions (fallback if audit prompts not used)
+            prompt = f"""You are a precise document analysis assistant. Read the question carefully, then answer using ONLY the provided context.
+
+Question: {query}
+
+Context:
+{context}
+
 Guidelines:
-1. Base your answer STRICTLY on the context above
-2. If the context doesn't contain enough information, state: "Based on the provided documents, I cannot find sufficient information to answer this question."
-3. Cite sources using [Doc1], [Doc2], etc. when referencing specific information
-4. Be accurate and concise
-5. If multiple documents provide conflicting information, mention both perspectives
+1. First, understand what the question is asking for
+2. Search the context for relevant information
+3. Base your answer STRICTLY on the context above
+4. If the context doesn't contain enough information, state: "Based on the provided documents, I cannot find sufficient information to answer this question."
+5. Cite sources using [Doc1], [Doc2], etc. when referencing specific information
+6. Be accurate and concise
+7. If multiple documents provide conflicting information, mention both perspectives
+8. Do not include random text that doesn't answer the question
 
 Answer:"""
         
@@ -910,13 +1006,14 @@ Answer:"""
         chunker = Chunker()
         context_chunks = []
         total_context_tokens = 0
-        # AGGRESSIVE: Lower thresholds for faster CPU inference
-        min_context_tokens = 50   # Aggressively reduced for speed
-        target_context_tokens = 500  # Target ~500 tokens for fast processing
-        max_chunk_length = 400    # Reduced chunk length for faster processing
+        # Use config values for thresholds
+        min_context_tokens = settings.MIN_CONTEXT_TOKENS
+        target_context_tokens = settings.TARGET_CONTEXT_TOKENS
+        max_chunk_length = settings.MAX_CHUNK_LENGTH_TOKENS
         
         # Detect query type early for context building (streaming)
         is_simple_fact = self._is_simple_fact_query(query)
+        is_metadata_query = self._is_metadata_query(query, metadatas)
         
         for i, chunk in enumerate(documents):
             # AGGRESSIVE: Truncate chunks if they're too long
@@ -969,7 +1066,42 @@ Answer:"""
         )
         
         # IMPROVED: Better prompt engineering with query type detection (streaming)
-        if is_simple_fact:
+        is_metadata_query = self._is_metadata_query(query, metadatas)
+        
+        if is_metadata_query:
+            # Special handling for document metadata queries
+            doc_titles = []
+            for i, metadata in enumerate(metadatas):
+                filename = metadata.get("filename", "")
+                doc_id = metadata.get("document_id", "")
+                if filename:
+                    doc_titles.append(f"Document {i+1} (ID: {doc_id}): {filename}")
+            
+            if doc_titles:
+                prompt = f"""You are answering a question about document metadata (titles, filenames, etc.).
+
+Available Documents:
+{chr(10).join(doc_titles)}
+
+Question: {query}
+
+Instructions:
+- Answer ONLY using the document titles/filenames listed above
+- If asking for "title" or "name", provide the filename(s) from the list
+- Be direct and concise
+- If the question cannot be answered from the document list, say: "I cannot find that information in the available documents."
+
+Answer:"""
+            else:
+                prompt = f"""Answer the question using the context below.
+
+Context:
+{context}
+
+Question: {query}
+
+Answer:"""
+        elif is_simple_fact:
             # Direct prompt for simple fact extraction
             prompt = f"""Answer the question directly and concisely using ONLY the context below.
 

@@ -4,27 +4,33 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual Environment
 venv/
 env/
 ENV/
 .venv
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+.next/
+out/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.local
+.env*.local
 
 # IDE
 .vscode/
@@ -32,47 +38,13 @@ ENV/
 *.swp
 *.swo
 *~
+
+# OS
 .DS_Store
+Thumbs.db
 
-# Jupyter Notebook
-.ipynb_checkpoints
-*.ipynb
+# ChromaDB
+chroma_db/
 
-# Environment variables
-.env
-.env.local
-
-# AWS
-.aws/
-*.pem
-
-# Databricks
-.databricks/
-
-# Data files
-data/
+# Uploads
 uploads/
-*.pdf
-*.parquet
-*.delta
-
-# FAISS indices
-*.index
-*.faiss
-
-# Logs
-*.log
-logs/
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Spark
-spark-warehouse/
-metastore_db/
-
-# Delta Lake
-_delta_log/
-

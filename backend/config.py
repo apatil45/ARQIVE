@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # Chunking
     CHUNK_SIZE: int = 400  # tokens
     CHUNK_OVERLAP: int = 50  # tokens
+    USE_AUDIT_CHUNKER: bool = True  # Use audit-aware chunking for better structure preservation
     
     # Accuracy Improvements (Phase 1)
     SIMILARITY_THRESHOLD: float = 0.6  # Filter chunks below this similarity (0-1, higher = stricter)
@@ -45,6 +46,28 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "tinyllama"  # Fast CPU model. Alternatives: "llama2:7b" (if phi-2 unavailable). Install with: ollama pull tinyllama
     MAX_CONTEXT_CHUNKS: int = 2  # Reduced from 5 for faster processing
+    
+    # RAG Performance & Limits
+    OLLAMA_CONTEXT_LIMIT: int = 4096  # Maximum context window for Ollama models
+    PROMPT_TEMPLATE_TOKENS: int = 50  # Estimated tokens for prompt template
+    RESERVE_FOR_RESPONSE: int = 100  # Reserve tokens for LLM response
+    MAX_CONTEXT_TOKENS: int = 1500  # Maximum context tokens to send to LLM (CPU optimized)
+    MAX_CONTEXT_TOKENS_GPU: int = 2000  # Maximum context tokens for GPU (higher limit)
+    MIN_CONTEXT_TOKENS: int = 50  # Minimum context tokens for basic answer
+    TARGET_CONTEXT_TOKENS: int = 500  # Target context tokens for fast processing
+    MAX_CHUNK_LENGTH_TOKENS: int = 400  # Maximum chunk length before truncation
+    
+    # RAG Timeouts (seconds)
+    OLLAMA_TIMEOUT_GPU: int = 30  # Timeout for GPU inference
+    OLLAMA_TIMEOUT_CPU: int = 60  # Timeout for CPU inference
+    MAX_RESPONSE_TOKENS_GPU: int = 400  # Max response tokens for GPU
+    MAX_RESPONSE_TOKENS_CPU: int = 250  # Max response tokens for CPU
+    
+    # RAG Caching
+    EMBEDDING_CACHE_SIZE: int = 1000  # LRU cache size for query embeddings
+    QUERY_RESULT_CACHE_SIZE: int = 500  # Max cached query results
+    QUERY_RESULT_CACHE_TTL: int = 3600  # Query result cache TTL (1 hour)
+    USER_DOC_CACHE_TTL: int = 300  # User document access cache TTL (5 minutes)
     
     # Document Processing
     UPLOAD_DIR: str = "data/uploads"
@@ -59,6 +82,18 @@ class Settings(BaseSettings):
     
     # Debug/Development
     DEBUG: bool = False  # Set to True for detailed error messages
+    USE_JSON_LOGGING: bool = False  # Set to True for JSON structured logging (better for log aggregation)
+    
+    # Environment
+    ENVIRONMENT: str = "development"  # development, staging, production
+    
+    # Security
+    ENFORCE_SECRET_KEY: bool = False  # Set to True in production to enforce SECRET_KEY validation
+    
+    # SQLite Connection Pooling
+    SQLITE_POOL_SIZE: int = 5  # Number of connections to keep in pool
+    SQLITE_MAX_OVERFLOW: int = 10  # Maximum additional connections beyond pool_size
+    SQLITE_USE_POOL: bool = True  # Set to False to disable connection pooling (backward compatible)
 
 
 # Validate settings on load
@@ -68,9 +103,19 @@ settings = Settings()
 if not settings.SECRET_KEY or len(settings.SECRET_KEY) < 32:
     import secrets
     import warnings
+    import os
+    
+    # In production, enforce SECRET_KEY requirement
+    if settings.ENFORCE_SECRET_KEY or os.getenv("ENFORCE_SECRET_KEY", "").lower() in ("true", "1", "yes"):
+        raise ValueError(
+            "SECRET_KEY is required and must be at least 32 characters. "
+            "Set SECRET_KEY environment variable for production deployment."
+        )
+    
     warnings.warn(
         "SECRET_KEY not set or too short! Generated temporary key. "
-        "Set SECRET_KEY environment variable (min 32 chars) for production!",
+        "Set SECRET_KEY environment variable (min 32 chars) for production! "
+        "Set ENFORCE_SECRET_KEY=true to enforce this requirement.",
         UserWarning
     )
     # Note: We can't directly modify the settings object, but the warning is enough
