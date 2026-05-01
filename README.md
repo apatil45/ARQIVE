@@ -1,53 +1,46 @@
 # ARQIVE
 
-**A**udit-document **R**etrieval and **Q**uery **I**ntelligence **V**ia **E**mbeddings
-
-A document Q&A app that runs locally. Upload PDFs, DOCX, or text; ask questions; get answers with sources. No cloud—everything stays on your machine.
+AI-powered audit document intelligence platform. On-premise, no cloud API calls.
 
 ## Requirements
 
-- Python 3.9+
-- Node.js 18+
-- [Ollama](https://ollama.ai) (with a model, e.g. `ollama pull tinyllama`)
+- **Python 3.11** (required for backend; 3.12+ has compatibility issues with SQLAlchemy/Alembic)
+- Docker & Docker Compose (recommended)
+- Ollama with `llama3.2:3b` for RAG queries
 
-## Setup
-
-**Backend**
+## Quick start (Docker)
 
 ```bash
-cd backend
-python -m venv venv
-# Windows: venv\Scripts\activate
-# Mac/Linux: source venv/bin/activate
-pip install -r requirements.txt
-python main.py
+cp .env.example .env
+# Edit .env: APP_SECRET_KEY (min 32 chars), DATABASE_URL=sqlite+aiosqlite:///./data/arqive_dev.db
+
+docker compose up --build
+# In another terminal:
+make init-db
+make seed-demo
+make pull-model
 ```
 
-Server runs at `http://0.0.0.0:8000`.
+- **Frontend:** http://localhost:3000 (Login → Search, Documents, Admin)
+- **API:** http://localhost:8000 — health: `/api/health`, ready: `/api/health/ready`
+- **Production stack template:** `docker compose -f docker-compose.prod.yml up -d`
 
-**Frontend** (new terminal)
+**Demo users (after seed-demo):**
+- viewer@demo.arqive.com / DemoViewer123!
+- auditor@demo.arqive.com / DemoAuditor123!
+- admin@demo.arqive.com / DemoAdmin123!
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+## What’s included
 
-<!-- App runs at `http://localhost:3000`. Default login: `admin` / `admin`. Change this for any real use. -->
+- **Backend:** FastAPI, JWT auth (access + httpOnly refresh), RBAC (viewer/auditor/admin)
+- **Documents:** Upload (PDF, Word, Excel, CSV) → Celery ingestion → ChromaDB + SQLite
+- **Query:** Semantic + structured retrieval, RRF rerank, Ollama (llama3.2:3b), SSE streaming, citations, confidence
+- **Audit:** Append-only log with row hash; admin audit-log endpoint
+- **Frontend:** React + Vite + Tailwind, Login, Search (SSE), Documents, Admin
 
-## Usage
+See `.cursorrules` for full stack, schema, and build order.
 
-Upload documents from the Upload page. Use Chat to ask questions; answers include source references.
+## Notes
 
-## Troubleshooting
-
-- **Ollama errors:** Ensure Ollama is running (`ollama serve`) and the model is installed (`ollama pull tinyllama`).
-- **Backend:** Activate the venv and reinstall deps if needed: `pip install -r requirements.txt`.
-- **Frontend:** Backend must be running; ensure port 3000 is free.
-
-## Structure
-
-- `backend/` — Python API, RAG, auth, document ingest
-- `frontend/` — Next.js web UI
-
-For production: set a strong secret key, change the default password, and follow standard security practices for your environment.
+- Demo users are created by `make seed-demo` (startup no longer auto-seeds users).
+- Local non-Docker test/lint commands require Python `3.11` and installed dependencies.

@@ -1,20 +1,21 @@
-import { useEffect } from 'react'
-import { useRouter } from 'next/router'
-import { useAuth } from '@/context/AuthContext'
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { api } from "../api/client";
+import { useAuthStore } from "../stores/auth";
+import Search from "./Search";
 
-export default function Home() {
-  const router = useRouter()
-  const { isAuthenticated } = useAuth()
+export default function Index() {
+  const navigate = useNavigate();
+  const { user, setUser } = useAuthStore();
 
   useEffect(() => {
-    if (isAuthenticated) {
-      router.push('/chat')
-    } else {
-      router.push('/login')
+    if (!localStorage.getItem("access_token")) {
+      navigate("/login");
+      return;
     }
-  }, [isAuthenticated, router])
+    api.get("/api/auth/me").then(({ data }) => setUser(data)).catch(() => navigate("/login"));
+  }, [navigate, setUser]);
 
-  return <div>Loading...</div>
+  if (!user) return <div className="p-4">Loading...</div>;
+  return <Search />;
 }
-
-
