@@ -32,3 +32,10 @@ backend/data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local project artifacts (keep local, do not track)
+.cursorrules
+ARQIVE_cursor_prompt.md
+ARQIVE_Architecture.docx
+ARQIVE_Architecture.pdf
+Arqive prompt.pdf
