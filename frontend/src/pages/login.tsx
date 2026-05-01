@@ -1,69 +1,64 @@
-import { useState } from 'react'
-import { useRouter } from 'next/router'
-import { useAuth } from '@/context/AuthContext'
-import styles from '@/styles/Login.module.css'
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { api } from "../api/client";
+import type { LoginResponse } from "../api/client";
+import { useAuthStore } from "../stores/auth";
 
 export default function Login() {
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-  const { login } = useAuth()
-  const router = useRouter()
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const navigate = useNavigate();
+  const { setUser, setToken } = useAuthStore();
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
-
+    e.preventDefault();
+    setError("");
     try {
-      await login(username, password)
-      router.push('/chat')
-    } catch (err: any) {
-      setError(err.message || 'Login failed')
-    } finally {
-      setLoading(false)
+      const { data } = await api.post<LoginResponse>("/api/auth/login", {
+        email,
+        password,
+      });
+      setToken(data.access_token);
+      setUser({
+        user_id: data.user_id,
+        tenant_id: data.tenant_id,
+        email: data.email,
+        full_name: data.full_name,
+        role: data.role,
+      });
+      navigate("/");
+    } catch (err: unknown) {
+      const d = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(d ?? "Login failed");
     }
-  }
+  };
 
   return (
-    <div className={styles.container}>
-      <div className={styles.loginBox}>
-        <h1>ARQIVE</h1>
-        <p className={styles.subtitle}>Document Intelligence System</p>
-        <form onSubmit={handleSubmit}>
-          <div className={styles.formGroup}>
-            <label htmlFor="username">Username</label>
-            <input
-              id="username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              autoFocus
-            />
-          </div>
-          <div className={styles.formGroup}>
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </div>
-          {error && <div className={styles.error}>{error}</div>}
-          <button type="submit" disabled={loading} className={styles.submitButton}>
-            {loading ? 'Logging in...' : 'Login'}
-          </button>
-        </form>
-        <p className={styles.note}>
-          Default: admin/admin (change in production!)
-        </p>
-      </div>
+    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+      <form onSubmit={handleSubmit} className="bg-white p-8 rounded-lg shadow-md w-full max-w-sm">
+        <h1 className="text-2xl font-bold mb-6 text-center">ARQIVE</h1>
+        <input
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="w-full px-3 py-2 border rounded mb-3"
+          required
+        />
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="w-full px-3 py-2 border rounded mb-4"
+          required
+        />
+        {error && <p className="text-red-600 text-sm mb-2">{error}</p>}
+        <button type="submit" className="w-full py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+          Log in
+        </button>
+      </form>
     </div>
-  )
+  );
 }
-
-

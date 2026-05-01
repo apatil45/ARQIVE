@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on: [backend, frontend]
+    restart: always
+
+  backend:
+    build: ./backend
+    env_file: .env.prod
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+    depends_on: [db, redis, ollama]
+    restart: always
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+
+  worker:
+    build: ./backend
+    env_file: .env.prod
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+    depends_on: [db, redis]
+    restart: always
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=4
+
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+    restart: always
+
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+    environment:
+      POSTGRES_DB: arqive
+      POSTGRES_USER: arqive
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=127.0.0.1:11434
+    restart: always
+    network_mode: host
+
+  redis:
+    image: redis:7.2-alpine
+    volumes:
+      - redis_data:/data
+    restart: always
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: redis-server --bind 127.0.0.1 --save 60 1
+
+volumes:
+  postgres_data:
+  ollama_data:
+  redis_data:

@@ -1,158 +1,84 @@
-/**
- * API client for ARQIVE backend
- */
-import axios from 'axios'
+import axios from "axios";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-// Get token from localStorage (persists across page refreshes)
-const TOKEN_KEY = 'arqive_auth_token'
-
-export const setAuthToken = (token: string | null) => {
-  if (typeof window !== 'undefined') {
-    if (token) {
-      localStorage.setItem(TOKEN_KEY, token)
-    } else {
-      localStorage.removeItem(TOKEN_KEY)
-    }
-  }
-  // Also keep in memory for immediate access
-  authToken = token
-}
-
-// Keep in-memory cache for performance
-let authToken: string | null = null
-
-export const getAuthToken = (): string | null => {
-  // Check memory first
-  if (authToken) {
-    return authToken
-  }
-  // Fallback to localStorage
-  if (typeof window !== 'undefined') {
-    const token = localStorage.getItem(TOKEN_KEY)
-    if (token) {
-      authToken = token
-      return token
-    }
-  }
-  return null
-}
-
-// Axios instance with auth interceptor
-const apiClient = axios.create({
+export const api = axios.create({
   baseURL: API_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-})
+  withCredentials: true,
+  headers: { "Content-Type": "application/json" },
+});
 
-// Add token to requests
-apiClient.interceptors.request.use((config: any) => {
-  if (authToken) {
-    config.headers.Authorization = `Bearer ${authToken}`
-  }
-  return config
-})
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("access_token");
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
 
-// Handle auth errors
-apiClient.interceptors.response.use(
-  (response: any) => response,
-  (error: any) => {
-    if (error.response?.status === 401) {
-      // Token expired or invalid
-      setAuthToken(null)
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login'
+api.interceptors.response.use(
+  (r) => r,
+  async (err) => {
+    const orig = err.config;
+    if (err.response?.status === 401 && !orig._retry) {
+      orig._retry = true;
+      try {
+        const { data } = await axios.post(
+          `${API_URL}/api/auth/refresh`,
+          {},
+          { withCredentials: true }
+        );
+        localStorage.setItem("access_token", data.access_token);
+        orig.headers.Authorization = `Bearer ${data.access_token}`;
+        return api(orig);
+      } catch {
+        localStorage.removeItem("access_token");
+        window.location.href = "/login";
       }
     }
-    return Promise.reject(error)
+    return Promise.reject(err);
   }
-)
+);
 
-// Auth endpoints
-export const login = async (username: string, password: string) => {
-  const formData = new URLSearchParams()
-  formData.append('username', username)
-  formData.append('password', password)
-  
-  const response = await axios.post(`${API_URL}/auth/login`, formData, {
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-  })
-  
-  const token = response.data.access_token
-  setAuthToken(token)
-  return response.data
-}
+export type LoginResponse = {
+  access_token: string;
+  token_type: string;
+  user_id: string;
+  tenant_id: string;
+  email: string;
+  full_name: string;
+  role: string;
+};
 
-export const verifyToken = async (token: string) => {
-  const formData = new URLSearchParams()
-  formData.append('token', token)
-  
-  const response = await axios.post(`${API_URL}/auth/verify`, formData, {
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-  })
-  
-  return response.data
-}
+export type MeResponse = {
+  user_id: string;
+  tenant_id: string;
+  email: string;
+  full_name: string;
+  role: string;
+};
 
-// Document endpoints
-export const uploadDocument = async (file: File) => {
-  const formData = new FormData()
-  formData.append('file', file)
-  
-  const response = await apiClient.post('/documents/upload', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  })
-  
-  return response.data
-}
+export type DocumentItem = {
+  id: string;
+  filename: string;
+  file_type: string;
+  file_size_bytes: number;
+  status: string;
+  chunk_count: number;
+  created_at: string;
+  category?: string;
+  doc_date?: string;
+};
 
-export const getDocuments = async () => {
-  const response = await apiClient.get('/documents/list')
-  return response.data
-}
+export type Citation = {
+  doc_id: string;
+  filename: string;
+  page: number;
+  excerpt: string;
+};
 
-// Query endpoint
-export const queryDocuments = async (query: string, maxResults: number = 5) => {
-  const response = await apiClient.post('/query', {
-    query,
-    max_results: maxResults,
-  })
-  return response.data
-}
-
-// Admin endpoints
-export const getUsers = async () => {
-  const response = await apiClient.get('/admin/users')
-  return response.data
-}
-
-// Query history endpoints
-export const getQueryHistory = async (limit: number = 50, skip: number = 0) => {
-  const response = await apiClient.get('/query/history', {
-    params: { limit, skip }
-  })
-  return response.data
-}
-
-export const deleteQueryHistory = async (historyId?: number) => {
-  const response = await apiClient.delete('/query/history', {
-    params: historyId ? { history_id: historyId } : {}
-  })
-  return response.data
-}
-
-// Document preview endpoint
-export const getDocumentPreview = async (documentId: string, maxChunks: number = 5) => {
-  const response = await apiClient.get(`/documents/${documentId}/preview`, {
-    params: { max_chunks: maxChunks }
-  })
-  return response.data
-}
+export type QueryResponse = {
+  answer: string;
+  citations: Citation[];
+  confidence: string;
+  confidence_reason: string;
+  unanswered_aspects?: string | null;
+};

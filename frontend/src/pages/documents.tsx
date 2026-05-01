@@ -1,78 +1,54 @@
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/router'
-import { useAuth } from '@/context/AuthContext'
-import { getDocuments } from '@/api/client'
-import styles from '@/styles/Documents.module.css'
+import { useQuery } from "@tanstack/react-query";
+import { api, type DocumentItem } from "../api/client";
+import DocumentUpload from "../components/DocumentUpload";
+import { useAuthStore } from "../stores/auth";
 
 export default function Documents() {
-  const [documents, setDocuments] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const { isAuthenticated } = useAuth()
-  const router = useRouter()
+  const { user } = useAuthStore();
+  const { data: docs = [], refetch } = useQuery({
+    queryKey: ["documents"],
+    queryFn: async () => {
+      const { data } = await api.get<DocumentItem[]>("/api/documents");
+      return data;
+    },
+  });
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      router.push('/login')
-      return
-    }
-    loadDocuments()
-  }, [isAuthenticated, router])
-
-  const loadDocuments = async () => {
-    try {
-      setLoading(true)
-      const result = await getDocuments()
-      setDocuments(result.documents || [])
-    } catch (error) {
-      console.error('Failed to load documents:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (!isAuthenticated) {
-    return null
-  }
+  const canUpload = user?.role === "auditor" || user?.role === "admin";
 
   return (
-    <div className={styles.container}>
-      <header className={styles.header}>
-        <h1>Documents</h1>
-        <button onClick={() => router.push('/chat')} className={styles.button}>
-          Back to Chat
-        </button>
-      </header>
-
-      <div className={styles.documentsList}>
-        {loading ? (
-          <p>Loading documents...</p>
-        ) : documents.length === 0 ? (
-          <p>No documents uploaded yet.</p>
-        ) : (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Filename</th>
-                <th>Type</th>
-                <th>Uploaded By</th>
-                <th>Uploaded At</th>
+    <div className="max-w-4xl mx-auto p-4 space-y-6">
+      <h2 className="text-xl font-semibold">Documents</h2>
+      {canUpload && (
+        <div className="p-4 border rounded-lg bg-gray-50">
+          <h3 className="text-sm font-medium mb-2">Upload</h3>
+          <DocumentUpload onUploaded={() => refetch()} />
+        </div>
+      )}
+      <div className="border rounded-lg overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className="text-left p-2">Filename</th>
+              <th className="text-left p-2">Type</th>
+              <th className="text-left p-2">Status</th>
+              <th className="text-left p-2">Chunks</th>
+            </tr>
+          </thead>
+          <tbody>
+            {docs.map((d) => (
+              <tr key={d.id} className="border-t">
+                <td className="p-2">{d.filename}</td>
+                <td className="p-2">{d.file_type}</td>
+                <td className="p-2">{d.status}</td>
+                <td className="p-2">{d.chunk_count}</td>
               </tr>
-            </thead>
-            <tbody>
-              {documents.map((doc) => (
-                <tr key={doc.id}>
-                  <td>{doc.filename}</td>
-                  <td>{doc.file_type}</td>
-                  <td>{doc.uploaded_by}</td>
-                  <td>{new Date(doc.uploaded_at).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            ))}
+          </tbody>
+        </table>
+        {docs.length === 0 && (
+          <p className="p-4 text-gray-500 text-center">No documents yet.</p>
         )}
       </div>
     </div>
-  )
+  );
 }
-
-

@@ -1,5 +1,0 @@
-"""
-ARQIVE Backend Package
-"""
-
-

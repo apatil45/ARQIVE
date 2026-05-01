@@ -1,50 +1,34 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/
-.venv
-*.egg-info/
-dist/
-build/
-
-# Node
+# Dependencies
 node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+# Build / output
 .next/
 out/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+dist/
+build/
+*.egg-info/
 
-# Data
-data/
-*.db
-*.sqlite
-*.sqlite3
-
-# Environment
+# Env
 .env
 .env.local
-.env*.local
+.env.*.local
+
+# Data (local dev)
+data/
+backend/data/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *.swo
-*~
 
 # OS
 .DS_Store
 Thumbs.db
-
-# ChromaDB
-chroma_db/
-
-# Uploads
-uploads/
